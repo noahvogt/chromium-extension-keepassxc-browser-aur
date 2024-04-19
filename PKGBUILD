@@ -5,8 +5,8 @@
 
 pkgname=chromium-extension-keepassxc-browser
 _extension=keepassxc-browser
-pkgver=1.8.12
-pkgrel=3
+pkgver=1.9.0.3
+pkgrel=1
 pkgdesc="KeePassXC Browser Integration - chromium extension"
 arch=('any')
 url="https://github.com/keepassxreboot/keepassxc-browser"
@@ -16,32 +16,40 @@ makedepends=('openssl' 'jq' 'unzip')
 source=("$_extension-$pkgver.zip::$url/releases/download/$pkgver/keepassxc-browser_${pkgver}_chromium.zip"
         "keepassxc-browser.pem")
 noextract=("$_extension-$pkgver::$url/releases/download/$pkgver/keepassxc-browser_${pkgver}_chromium.zip")
-sha256sums=('31cb886c45f140ae63fad557b0cd330c2f3b1b875f83b05705a05ed8510eac03'
+sha256sums=('5c3da230bc45e9a3caffc65faa314998f5f61c68662839abfdb14b1d326bc92f'
             'b3fe31d0cc35b79f9b64f18e792de6b2be1fb8a94bc4d1ce8e82428faf3e35df')
 
 build() {
-    pubkey="$(openssl rsa -in "$_extension.pem" -pubout -outform DER |base64 -w0)"
+    # prepare source directory (while retaining reproducibility)
+    mkdir -p "_extension-$pkgver"
+    unzip -q -u -d "$_extension-$pkgver" "$_extension-$pkgver.zip"
+    cd "$_extension-$pkgver"
+
+    # derive variables from private key
+    pubkey="$(openssl rsa -in "$srcdir/$_extension.pem" -pubout -outform DER | base64 -w0)"
+    export _id="$(echo "$pubkey" | base64 -d | sha256sum | head -c32 | tr '0-9a-f' 'a-p')"
+
     # create extension json
-    export _id="$(echo $pubkey |base64 -d |sha256sum |head -c32 |tr '0-9a-f' 'a-p')"
-    cat << EOF > "$_id".json
+    _extver="$(jq -r '.version' manifest.json)"
+    cat << EOF > "$srcdir/$_id".json
 {
-    "external_crx": "/usr/lib/$pkgname/$pkgname-$pkgver.crx",
-    "external_version": "$pkgver"
+    "external_crx": "/usr/lib/$pkgname/$_extension-$pkgver.crx",
+    "external_version": "$_extver"
 }
 EOF
-    mkdir -p "_extension-$pkgver"
-    unzip -u -d "$_extension-$pkgver" "$_extension-$pkgver.zip"
-    cd "$_extension-$pkgver"
+
+    # enroll public key in manifest
     jq --ascii-output --arg key "$pubkey" '. + {key: $key}' manifest.json > manifest.json.new
     mv manifest.json.new manifest.json
     touch -t 202403120000 manifest.json
     cd "$srcdir"
+
+    # pack extension
     tmpdir="$(mktemp -d chromium-pack-XXXXXX)"
     chromium --user-data-dir="$tmpdir" --pack-extension="$_extension-$pkgver" --pack-extension-key="$_extension.pem"
-    mv "$_extension-$pkgver.crx" "$pkgname-$pkgver.crx"
 }
 
 package() {
     install -Dm644 -t "$pkgdir/usr/share/chromium/extensions/" "$_id.json"
-    install -Dm644 -t "$pkgdir/usr/lib/$pkgname/" "$pkgname-$pkgver.crx"
+    install -Dm644 -t "$pkgdir/usr/lib/$pkgname/" "$_extension-$pkgver.crx"
 }
